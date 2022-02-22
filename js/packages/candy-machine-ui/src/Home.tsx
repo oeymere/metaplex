@@ -23,12 +23,15 @@ import { GatewayProvider } from '@civic/solana-gateway-react';
 const ConnectButton = styled(WalletDialogButton)`
   width: 100%;
   height: 60px;
-  margin-top: 10px;
+  margin-top: 5px;
   margin-bottom: 5px;
-  background: linear-gradient(180deg, #604ae5 0%, #813eee 100%);
+  background: linear-gradient(180deg, rgb(247 155 77), rgb(219 118 32));
   color: white;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: bold;
+  &:hover {
+    background: rgb(204, 102, 0);
+  }
 `;
 
 const MintContainer = styled.div``; // add your owns styles here
@@ -163,8 +166,11 @@ const Home = (props: HomeProps) => {
   ]);
 
   return (
-    <Container style={{ marginTop: 100 }}>
+    <Container style={{ marginTop: 30 }}>
       <Container maxWidth="xs" style={{ position: 'relative' }}>
+        <div>
+          <img src="winter-heading.png" alt="Winter logo" style={{ maxWidth: "100%", maxHeight: "auto" }}/>
+        </div>
         <Paper
           style={{ padding: 24, backgroundColor: '#151A1F', borderRadius: 6 }}
         >
