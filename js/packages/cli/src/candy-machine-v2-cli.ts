@@ -1,7 +1,7 @@
 #!/usr/bin/env ts-node
 import * as fs from 'fs';
 import * as path from 'path';
-import { program } from 'commander';
+import { InvalidArgumentError, program } from 'commander';
 import * as anchor from '@project-serum/anchor';
 
 import {
@@ -9,7 +9,6 @@ import {
   fromUTF8Array,
   getCandyMachineV2Config,
   parsePrice,
-  shuffle,
 } from './helpers/various';
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import {
@@ -33,15 +32,15 @@ import { loadCache, saveCache } from './helpers/cache';
 import { mintV2 } from './commands/mint';
 import { signMetadata } from './commands/sign';
 import {
-  getAccountsByCreatorAddress,
+  getAddressesByCreatorAddress,
   signAllMetadataFromCandyMachine,
 } from './commands/signAll';
+import { getOwnersByMintAddresses } from './commands/owners';
 import log from 'loglevel';
 import { withdrawV2 } from './commands/withdraw';
 import { updateFromCache } from './commands/updateFromCache';
 import { StorageType } from './helpers/storage-type';
 import { getType } from 'mime';
-import { escapeRegExp } from 'lodash';
 program.version('0.0.2');
 const supportedImageTypes = {
   'image/png': 1,
@@ -62,6 +61,17 @@ if (!fs.existsSync(CACHE_PATH)) {
   fs.mkdirSync(CACHE_PATH);
 }
 log.setLevel(log.levels.INFO);
+
+// From commander examples
+function myParseInt(value) {
+  // parseInt takes a string and a radix
+  const parsedValue = parseInt(value, 10);
+  if (isNaN(parsedValue)) {
+    throw new InvalidArgumentError('Not a number.');
+  }
+  return parsedValue;
+}
+
 programCommand('upload')
   .argument(
     '<directory>',
@@ -78,8 +88,15 @@ programCommand('upload')
     '-r, --rpc-url <string>',
     'custom rpc url since this is a heavy command',
   )
+  .option(
+    '-rl, --rate-limit <number>',
+    'max number of requests per second',
+    myParseInt,
+    5,
+  )
   .action(async (files: string[], options, cmd) => {
-    const { keypair, env, cacheName, configPath, rpcUrl } = cmd.opts();
+    const { keypair, env, cacheName, configPath, rpcUrl, rateLimit } =
+      cmd.opts();
 
     const walletKeyPair = loadWalletKey(keypair);
     const anchorProgram = await loadCandyProgramV2(walletKeyPair, env, rpcUrl);
@@ -135,11 +152,6 @@ programCommand('upload')
     ) {
       throw new Error(
         'IPFS selected as storage option but Infura project id or secret key were not provided.',
-      );
-    }
-    if (storage === StorageType.NftStorage && !nftStorageKey) {
-      throw new Error(
-        'NftStorage selected as storage option but NftStorage project api key were not provided.',
       );
     }
     if (storage === StorageType.Aws && !awsS3Bucket) {
@@ -237,6 +249,7 @@ programCommand('upload')
         goLiveDate,
         uuid,
         arweaveJwk,
+        rateLimit,
       });
     } catch (err) {
       log.warn('upload was not successful, please re-run.', err);
@@ -496,13 +509,15 @@ programCommand('verify_upload')
             CONFIG_ARRAY_START_V2 + 4 + CONFIG_LINE_SIZE_V2 * (key + 1),
           );
 
-          const name = fromUTF8Array([...thisSlice.slice(2, 34)]);
-          const uri = fromUTF8Array([...thisSlice.slice(40, 240)]);
+          const name = fromUTF8Array([
+            ...thisSlice.slice(4, 36).filter(n => n !== 0),
+          ]);
+          const uri = fromUTF8Array([
+            ...thisSlice.slice(40, 240).filter(n => n !== 0),
+          ]);
           const cacheItem = cacheContent.items[key];
-          if (
-            !name.match(escapeRegExp(cacheItem.name)) ||
-            !uri.match(escapeRegExp(cacheItem.link))
-          ) {
+
+          if (name != cacheItem.name || uri != cacheItem.link) {
             //leaving here for debugging reasons, but it's pretty useless. if the first upload fails - all others are wrong
             /*log.info(
                 `Name (${name}) or uri (${uri}) didnt match cache values of (${cacheItem.name})` +
@@ -959,46 +974,6 @@ programCommand('update_existing_nfts_from_latest_cache_file')
     );
   });
 
-// can then upload these
-programCommand('randomize_unminted_nfts_in_new_cache_file').action(
-  async (directory, cmd) => {
-    const { keypair, env, cacheName } = cmd.opts();
-    const cacheContent = loadCache(cacheName, env);
-    const walletKeyPair = loadWalletKey(keypair);
-    const anchorProgram = await loadCandyProgramV2(walletKeyPair, env);
-    const candyAddress = cacheContent.program.candyMachine;
-
-    log.debug('Creator pubkey: ', walletKeyPair.publicKey.toBase58());
-    log.debug('Environment: ', env);
-    log.debug('Candy machine address: ', candyAddress);
-
-    const candyMachine = await anchorProgram.account.candyMachine.fetch(
-      candyAddress,
-    );
-
-    const itemsRedeemed = candyMachine.itemsRedeemed;
-    log.info('Randomizing one later than', itemsRedeemed.toNumber());
-    const keys = Object.keys(cacheContent.items).filter(
-      k => parseInt(k) > itemsRedeemed,
-    );
-    const shuffledKeys = shuffle(keys.slice());
-    const newItems = {};
-    for (let i = 0; i < keys.length; i++) {
-      newItems[keys[i].toString()] =
-        cacheContent.items[shuffledKeys[i].toString()];
-      log.debug('Setting ', keys[i], 'to ', shuffledKeys[i]);
-      newItems[keys[i].toString()].onChain = false;
-    }
-    fs.writeFileSync(
-      '.cache/' + env + '-' + cacheName + '-randomized',
-      JSON.stringify({
-        ...cacheContent,
-        items: { ...cacheContent.items, ...newItems },
-      }),
-    );
-  },
-);
-
 programCommand('get_all_mint_addresses').action(async (directory, cmd) => {
   const { env, cacheName, keypair } = cmd.opts();
 
@@ -1011,15 +986,40 @@ programCommand('get_all_mint_addresses').action(async (directory, cmd) => {
     candyMachineId,
   );
 
-  const accountsByCreatorAddress = await getAccountsByCreatorAddress(
+  log.info('Getting mint addresses...');
+  const addresses = await getAddressesByCreatorAddress(
     candyMachineAddr.toBase58(),
     anchorProgram.provider.connection,
   );
-  const addresses = accountsByCreatorAddress.map(it => {
-    return new PublicKey(it[0].mint).toBase58();
-  });
+  fs.writeFileSync('./mint-addresses.json', JSON.stringify(addresses, null, 2));
+  log.info('Successfully saved mint addresses to ./mint-addresses.json');
+});
 
-  console.log(JSON.stringify(addresses, null, 2));
+programCommand('get_all_owners_addresses').action(async (directory, cmd) => {
+  const { env, cacheName, keypair } = cmd.opts();
+
+  const cacheContent = loadCache(cacheName, env);
+  const walletKeyPair = loadWalletKey(keypair);
+  const anchorProgram = await loadCandyProgramV2(walletKeyPair, env);
+
+  const candyMachineId = new PublicKey(cacheContent.program.candyMachine);
+  const [candyMachineAddr] = await deriveCandyMachineV2ProgramAddress(
+    candyMachineId,
+  );
+
+  log.info('Getting mint addresses...');
+  const addresses = await getAddressesByCreatorAddress(
+    candyMachineAddr.toBase58(),
+    anchorProgram.provider.connection,
+  );
+
+  log.info('Getting owner addresses...');
+  const owners = await getOwnersByMintAddresses(
+    addresses,
+    anchorProgram.provider.connection,
+  );
+  fs.writeFileSync('./owner-addresses.json', JSON.stringify(owners, null, 2));
+  log.info('Successfully saved owner addresses to ./owner-addresses.json');
 });
 
 function programCommand(name: string) {

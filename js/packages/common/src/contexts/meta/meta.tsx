@@ -12,6 +12,7 @@ import { getEmptyMetaState } from './getEmptyMetaState';
 import {
   limitedLoadAccounts,
   loadAccounts,
+  pullAuctionData,
   pullYourMetadata,
   USE_SPEED_RUN,
 } from './loadAccounts';
@@ -121,6 +122,13 @@ export function MetaProvider({
     setState(nextState);
     await updateMints(nextState.metadataByMint);
     return [];
+  }
+
+  async function pullAuctionListData(auctionAddress: StringPublicKey) {
+    const nextState = await pullAuctionData(connection, auctionAddress, state);
+    setState(nextState);
+    await updateMints(nextState.metadataByMint);
+    return nextState;
   }
 
   async function pullAuctionPage(auctionAddress: StringPublicKey) {
@@ -344,14 +352,7 @@ export function MetaProvider({
       update(undefined, undefined);
       updateRequestsInQueue.current = 0;
     }
-  }, [
-    connection,
-    setState,
-    updateMints,
-    storeAddress,
-    isReady,
-    page,
-  ]);
+  }, [connection, setState, updateMints, storeAddress, isReady, page]);
 
   // Fetch metadata on userAccounts change
   useEffect(() => {
@@ -386,6 +387,7 @@ export function MetaProvider({
         pullItemsPage,
         pullPackPage,
         pullUserMetadata,
+        pullAuctionListData,
         isLoading,
         isFetching,
       }}
