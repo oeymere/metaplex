@@ -1,5 +1,4 @@
 import { readFile, stat } from 'fs/promises';
-import { readFileSync } from 'fs';
 import path from 'path';
 import Arweave from 'arweave';
 
@@ -15,6 +14,7 @@ import Transaction from 'arweave/node/lib/transaction';
 import Bundlr from '@bundlr-network/client';
 
 import BundlrTransaction from '@bundlr-network/client/build/src/transaction';
+import { getAssetManifest } from '../../commands/upload';
 
 export const LAMPORTS = 1_000_000_000;
 /**
@@ -342,6 +342,7 @@ async function processFiles({
   const imageContentType = getType(filePair.image);
   const imageBuffer = await readFile(filePair.image);
   if (storageType === StorageType.ArweaveSol) {
+    //@ts-ignore
     imageDataItem = bundlr.createTransaction(imageBuffer, {
       tags: imageTags.concat({
         name: 'Content-Type',
@@ -363,6 +364,7 @@ async function processFiles({
     animationContentType = getType(filePair.animation);
     const animationBuffer = await readFile(filePair.animation);
     if (storageType === StorageType.ArweaveSol) {
+      //@ts-ignore
       animationDataItem = bundlr.createTransaction(animationBuffer, {
         tags: imageTags.concat({
           name: 'Content-Type',
@@ -396,6 +398,7 @@ async function processFiles({
   );
 
   if (storageType === StorageType.ArweaveSol) {
+    //@ts-ignore
     manifestDataItem = bundlr.createTransaction(JSON.stringify(manifest), {
       tags: manifestTags,
     });
@@ -415,6 +418,7 @@ async function processFiles({
   );
 
   if (storageType === StorageType.ArweaveSol) {
+    //@ts-ignore
     arweavePathManifestDataItem = bundlr.createTransaction(
       JSON.stringify(arweavePathManifest),
       { tags: arweavePathManifestTags },
@@ -483,9 +487,8 @@ export function* makeArweaveBundleUploadGenerator(
 
   const filePairs = assets.map((asset: AssetKey) => {
     const manifestPath = path.join(dirname, `${asset.index}.json`);
-    const manifestData: Manifest = JSON.parse(
-      readFileSync(manifestPath).toString(),
-    );
+    const manifestData = getAssetManifest(dirname, asset.index);
+
     return {
       key: asset.index,
       image: path.join(dirname, `${manifestData.image}`),

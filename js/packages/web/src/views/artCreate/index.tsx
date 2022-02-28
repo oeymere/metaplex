@@ -14,6 +14,7 @@ import {
   Typography,
   Space,
   Card,
+  Checkbox,
 } from 'antd';
 import { ArtCard } from './../../components/ArtCard';
 import { UserSearch, UserValue } from './../../components/UserSearch';
@@ -48,6 +49,8 @@ import {
   PlusOutlined,
 } from '@ant-design/icons';
 import { useTokenList } from '../../contexts/tokenList';
+import { SafetyDepositDraft } from '../../actions/createAuctionManager';
+import { ArtSelector } from '../auctionCreate/artSelector';
 
 const { Step } = Steps;
 const { Dragger } = Upload;
@@ -66,12 +69,15 @@ export const ArtCreateView = () => {
   const [step, setStep] = useState<number>(0);
   const [stepsVisible, setStepsVisible] = useState<boolean>(true);
   const [isMinting, setMinting] = useState<boolean>(false);
-  const [nft, setNft] =
-    useState<{ metadataAccount: StringPublicKey } | undefined>(undefined);
+  const [nft, setNft] = useState<
+    { metadataAccount: StringPublicKey } | undefined
+  >(undefined);
   const [files, setFiles] = useState<File[]>([]);
+  const [isCollection, setIsCollection] = useState<boolean>(false);
   const [attributes, setAttributes] = useState<IMetadataExtension>({
     name: '',
     symbol: '',
+    collection: '',
     description: '',
     external_url: '',
     image: '',
@@ -104,6 +110,7 @@ export const ArtCreateView = () => {
       name: attributes.name,
       symbol: attributes.symbol,
       creators: attributes.creators,
+      collection: attributes.collection,
       description: attributes.description,
       sellerFeeBasisPoints: attributes.seller_fee_basis_points,
       image: attributes.image,
@@ -191,6 +198,8 @@ export const ArtCreateView = () => {
             <InfoStep
               attributes={attributes}
               files={files}
+              isCollection={isCollection}
+              setIsCollection={setIsCollection}
               setAttributes={setAttributes}
               confirm={() => gotoStep(3)}
             />
@@ -242,7 +251,11 @@ const CategoryStep = (props: {
         <h2>Create a new item</h2>
         <p>
           First time creating on Metaplex?{' '}
-          <a href="https://docs.metaplex.com/storefront/create" target="_blank" rel="noreferrer">
+          <a
+            href="https://docs.metaplex.com/storefront/create"
+            target="_blank"
+            rel="noreferrer"
+          >
             Read our creators’ guide.
           </a>
         </p>
@@ -553,8 +566,11 @@ const UploadStep = (props: {
                   : mainFile && mainFile.name,
             });
             const url = await fetch(customURL).then(res => res.blob());
-            const files = [coverFile, mainFile, customURL ? new File([url], customURL) : '']
-              .filter(f => f) as File[];
+            const files = [
+              coverFile,
+              mainFile,
+              customURL ? new File([url], customURL) : '',
+            ].filter(f => f) as File[];
 
             props.setFiles(files);
             props.confirm();
@@ -620,14 +636,32 @@ const useArtworkFiles = (files: File[], attributes: IMetadataExtension) => {
 const InfoStep = (props: {
   attributes: IMetadataExtension;
   files: File[];
+  isCollection: boolean;
+  setIsCollection: (val: boolean) => void;
   setAttributes: (attr: IMetadataExtension) => void;
   confirm: () => void;
 }) => {
-  const { image } = useArtworkFiles(
-    props.files,
-    props.attributes,
-  );
+  const { image } = useArtworkFiles(props.files, props.attributes);
   const [form] = Form.useForm();
+  const { isCollection, setIsCollection } = props;
+  const [selectedCollection, setSelectedCollection] = useState<
+    Array<SafetyDepositDraft>
+  >([]);
+
+  const artistFilter = useCallback(
+    (i: SafetyDepositDraft) =>
+      !(i.metadata.info.data.creators || []).some((c: Creator) => !c.verified),
+    [],
+  );
+
+  useEffect(() => {
+    if (selectedCollection.length) {
+      props.setAttributes({
+        ...props.attributes,
+        collection: selectedCollection[0].metadata.info.mint,
+      });
+    }
+  }, [selectedCollection]);
 
   return (
     <>
@@ -687,7 +721,32 @@ const InfoStep = (props: {
               }
             />
           </label>
-
+          <label className="action-field direction-row">
+            <Checkbox
+              checked={isCollection}
+              onChange={val => {
+                setIsCollection(val.target.checked);
+              }}
+            />
+            <span className="field-title" style={{ marginLeft: '10px' }}>
+              Is parent collection?
+            </span>
+          </label>
+          {!isCollection && (
+            <label className="action-field">
+              <span className="field-title">Collection</span>
+              <ArtSelector
+                filter={artistFilter}
+                selected={selectedCollection}
+                setSelected={items => {
+                  setSelectedCollection(items);
+                }}
+                allowMultiple={false}
+              >
+                Select NFT
+              </ArtSelector>
+            </label>
+          )}
           <label className="action-field">
             <span className="field-title">Description</span>
             <Input.TextArea
@@ -706,19 +765,24 @@ const InfoStep = (props: {
           </label>
           <label className="action-field">
             <span className="field-title">Maximum Supply</span>
-            <InputNumber
-              placeholder="Quantity"
-              onChange={(val: number) => {
-                props.setAttributes({
-                  ...props.attributes,
-                  properties: {
-                    ...props.attributes.properties,
-                    maxSupply: val,
-                  },
-                });
-              }}
-              className="royalties-input"
-            />
+            {!isCollection ? (
+              <InputNumber
+                placeholder="Quantity"
+                value={props.attributes.properties.maxSupply}
+                onChange={(val: number) => {
+                  props.setAttributes({
+                    ...props.attributes,
+                    properties: {
+                      ...props.attributes.properties,
+                      maxSupply: val,
+                    },
+                  });
+                }}
+                className="royalties-input"
+              />
+            ) : (
+              0
+            )}
           </label>
           <label className="action-field">
             <span className="field-title">Attributes</span>
@@ -729,10 +793,7 @@ const InfoStep = (props: {
                 <>
                   {fields.map(({ key, name }) => (
                     <Space key={key} align="baseline">
-                      <Form.Item
-                        name={[name, 'trait_type']}
-                        hasFeedback
-                      >
+                      <Form.Item name={[name, 'trait_type']} hasFeedback>
                         <Input placeholder="trait_type (Optional)" />
                       </Form.Item>
                       <Form.Item
@@ -742,10 +803,7 @@ const InfoStep = (props: {
                       >
                         <Input placeholder="value" />
                       </Form.Item>
-                      <Form.Item
-                        name={[name, 'display_type']}
-                        hasFeedback
-                      >
+                      <Form.Item name={[name, 'display_type']} hasFeedback>
                         <Input placeholder="display_type (Optional)" />
                       </Form.Item>
                       <MinusCircleOutlined onClick={() => remove(name)} />
@@ -1069,10 +1127,7 @@ const LaunchStep = (props: {
   connection: Connection;
 }) => {
   const [cost, setCost] = useState(0);
-  const { image } = useArtworkFiles(
-    props.files,
-    props.attributes,
-  );
+  const { image } = useArtworkFiles(props.files, props.attributes);
   const files = props.files;
   const metadata = props.attributes;
   useEffect(() => {
